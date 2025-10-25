@@ -25,7 +25,7 @@ def detect_gesture(frame):
             # Gesture smoothing (must hold for at least 3 frames)
             if index_tip.y < index_pip.y:
                 gesture_counter += 1
-                if gesture_counter > 3:
+                if gesture_counter > 60:
                     gesture_counter = 0
                     return True
             else:
