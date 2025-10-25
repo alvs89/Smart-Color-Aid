@@ -1,12 +1,17 @@
 import cv2
 import numpy as np
 from color_adjustment import simulate_deuteranopia, detect_color
+from gesture_control import detect_gesture
 
 # Initialize camera
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("Error: Camera not found or cannot be opened.")
     exit()
+
+enhanced_mode = False
+hand_present = False
+gesture_active = False
 
 # Voice timing control
 def draw_text_with_background(img, text_lines, position=(20, 40)):
@@ -52,17 +57,34 @@ while True:
         print("Error: Unable to capture frame.")
         break
 
-    # Right window: simulate deuteranopia
-    deuter_frame = simulate_deuteranopia(frame.copy())
+    gesture_detected = detect_gesture(frame)
+
+    # Toggle enhanced_mode only once per hand appearance
+    if gesture_detected and not hand_present:
+        enhanced_mode = not enhanced_mode
+        print(f"Gesture detected! Enhanced mode is now: {enhanced_mode}")
+        hand_present = True  # Lock until hand disappears
+    elif not gesture_detected:
+        hand_present = False  # Reset when hand disappears
+
+    # Apply deuteranopia simulation
+    if enhanced_mode:
+        deuter_frame = simulate_deuteranopia(frame.copy())  # your enhanced mapping
+    else:
+        deuter_frame = frame.copy()  # normal view
 
     # Detect colors from the normal frame
     detected_colors = detect_color(frame)
-
     # Format and draw text
     text_lines = format_detected_colors(detected_colors)
     draw_text_with_background(frame, text_lines)
     draw_text_with_background(deuter_frame, text_lines)
 
+    # Overlay enhanced mode status
+    status_text = "Enhanced Mode ON" if enhanced_mode else "Enhanced Mode OFF"
+    cv2.putText(deuter_frame, status_text, (20, 100),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+    
     # Combine windows (Normal left | Deuteranopia right)
     combined = np.hstack((frame, deuter_frame))
 
