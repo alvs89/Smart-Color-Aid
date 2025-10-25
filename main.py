@@ -57,14 +57,19 @@ while True:
         print("Error: Unable to capture frame.")
         break
 
-    gesture_detected = detect_gesture(frame)
+    # Inside your while True loop
+    gesture_type = detect_gesture(frame)  
 
-    # Toggle enhanced_mode only once per hand appearance
-    if gesture_detected and not hand_present:
-        enhanced_mode = not enhanced_mode
-        print(f"Gesture detected! Enhanced mode is now: {enhanced_mode}")
+# Toggle enhanced_mode only once per hand appearance
+    if gesture_type and not hand_present:
+        if gesture_type == 'index':
+            enhanced_mode = not enhanced_mode
+            print("Index gesture detected! Enhanced mode is now:", enhanced_mode)
+        elif gesture_type == 'thumb':
+            enhanced_mode = not enhanced_mode
+            print("Thumbs-up detected! Enhanced mode is now:", enhanced_mode)
         hand_present = True  # Lock until hand disappears
-    elif not gesture_detected:
+    elif not gesture_type:
         hand_present = False  # Reset when hand disappears
 
     # Apply deuteranopia simulation
