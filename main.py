@@ -1,42 +1,14 @@
 import cv2
 import numpy as np
-import pyttsx3
-import time
 from color_adjustment import simulate_deuteranopia, detect_color
 
 # Initialize camera
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
-    print("❌ Error: Camera not found or cannot be opened.")
+    print("Error: Camera not found or cannot be opened.")
     exit()
 
-# Initialize voice engine 
-engine = pyttsx3.init()
-engine.setProperty("rate", 170)   # Speaking speed
-engine.setProperty("volume", 1.0) # Volume level
-
 # Voice timing control
-last_spoken = ""
-last_speak_time = 0
-speak_delay = 3  # seconds between announcements
-
-def speak_colors(detected_colors):
-    """Speaks detected colors with time delay and change check."""
-    global last_spoken, last_speak_time
-    current_time = time.time()
-
-    if not detected_colors:
-        message = "No color detected"
-    else:
-        message = "The colors are " + ", ".join(detected_colors)
-
-    # Speak only if colors changed AND enough time passed
-    if (message != last_spoken) and (current_time - last_speak_time > speak_delay):
-        last_spoken = message
-        last_speak_time = current_time
-        engine.say(message)
-        engine.runAndWait()
-
 def draw_text_with_background(img, text_lines, position=(20, 40)):
     """Draws readable text box with translucent background."""
     x, y = position
@@ -77,7 +49,7 @@ def format_detected_colors(detected_colors, max_line_len=40):
 while True:
     ret, frame = cap.read()
     if not ret:
-        print("❌ Error: Unable to capture frame.")
+        print("Error: Unable to capture frame.")
         break
 
     # Right window: simulate deuteranopia
@@ -90,9 +62,6 @@ while True:
     text_lines = format_detected_colors(detected_colors)
     draw_text_with_background(frame, text_lines)
     draw_text_with_background(deuter_frame, text_lines)
-
-    # Speak colors periodically
-    speak_colors(detected_colors)
 
     # Combine windows (Normal left | Deuteranopia right)
     combined = np.hstack((frame, deuter_frame))
