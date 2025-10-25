@@ -15,6 +15,13 @@ def index_raised_condition(handLms):
             handLms.landmark[16].y > handLms.landmark[14].y and  # ring down
             handLms.landmark[20].y > handLms.landmark[18].y)      # pinky down
 
+def open_raised_condition(handLms):
+    """True if index finger is up and all other fingers are down."""
+    return (handLms.landmark[8].y < handLms.landmark[6].y and  # index up
+            handLms.landmark[12].y < handLms.landmark[10].y and  # middle up
+            handLms.landmark[16].y < handLms.landmark[14].y and  # ring up
+            handLms.landmark[20].y < handLms.landmark[18].y)      # pinky up
+    
 def thumb_up_condition(handLms, threshold=0.02):
     """Detects thumbs-up more reliably even if fingers are slightly bent."""
     thumb_tip = handLms.landmark[4]
@@ -63,6 +70,11 @@ def detect_gesture(frame):
             if gesture_counter >= gesture_frames:
                 gesture_counter = 0
                 return 'thumb'
+        elif open_raised_condition(handLms):
+            gesture_counter += 1
+            if gesture_counter >= gesture_frames:
+                gesture_counter = 0
+                return 'open'
         else:
             gesture_counter = 0
     else:
