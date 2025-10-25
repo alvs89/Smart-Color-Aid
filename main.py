@@ -68,6 +68,9 @@ while True:
         elif gesture_type == 'thumb':
             enhanced_mode = not enhanced_mode
             print("Thumbs-up detected! Enhanced mode is now:", enhanced_mode)
+        elif gesture_type == 'open':
+            enhanced_mode = not enhanced_mode
+            print("Open hands detected! Enhanced mode is now:", enhanced_mode)
         hand_present = True  # Lock until hand disappears
     elif not gesture_type:
         hand_present = False  # Reset when hand disappears
