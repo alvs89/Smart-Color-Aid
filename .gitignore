@@ -1,0 +1,19 @@
+# Ignore local and temporary files
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore datasets and macOS junk
+dataset/
+*.tar.gz
+__MACOSX/
+.DS_Store
+
+# Ignore VSCode and editor files
+.vscode/
+*.code-workspace
+
+# Ignore temporary Python runner files
+tempCodeRunnerFile.py
