@@ -111,7 +111,7 @@ def daltonize(image, enhance_luminance=True):
     h[(h > 20) & (h < 50)] += 8   # shift yellows slightly toward orange
     h[(h > 90) & (h < 130)] -= 8  # shift cyans/blues slightly toward aqua
     h = np.clip(h, 0, 179).astype(np.uint8)
-    #hi 
+    #hi SSSSSS
     
     s = cv2.multiply(s, 1.1)
     v = cv2.convertScaleAbs(v, alpha=1.05, beta=0)
