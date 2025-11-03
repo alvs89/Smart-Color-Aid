@@ -150,7 +150,8 @@ if not os.path.exists(model_path):
     raise FileNotFoundError("Model not found: " + model_path)
 model = tf.keras.models.load_model(model_path, compile=False)
 
-original = cv2.imread("images/plate1.png")
+original = cv2.imread(r"E:\Programs\3rdyear\Smart-Color-Aid\ColorVisionDemo\images\plate1.png")
+
 if original is None:
     raise FileNotFoundError("Image not found. Check path!")
 
