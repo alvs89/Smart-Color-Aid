@@ -6,6 +6,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
+import json # New import for persistence
 
 # use rich correction/simulation functions
 from ColorVisionDemo.color_corrector import (
@@ -22,6 +23,10 @@ MODEL_CANDIDATES = [
     os.path.join("models", "daltonization_model.h5"),
     os.path.join("models", "model.h5"),
 ]
+
+# File path constants
+TUTORIAL_FLAG_FILE = ".first_run"
+CONFIG_FILE = "config.json"
 
 
 class DaltonizeGUI:
@@ -45,24 +50,57 @@ class DaltonizeGUI:
         # lock protecting cached images and sim_nopia to avoid race conditions
         self.cache_lock = threading.Lock()
         self.model = None
-        self.use_model = tk.BooleanVar(value=False)
-        self.intensity = tk.IntVar(value=75)  # default intensity 1..100
+        
+        # Load persistent settings before building layout
+        initial_intensity, initial_use_model = self._load_settings()
+
+        self.use_model = tk.BooleanVar(value=initial_use_model)
+        self.intensity = tk.IntVar(value=initial_intensity)  # default intensity 1..100
 
         # frame-counter + model period for periodic full-model updates during streaming
         self._frame_counter = 0
         self.model_period = 15  # run the heavy model every N frames (tune as needed)
 
+        # Image data buffers (BGR format, NumPy arrays)
         self.orig_bgr = None
         self.sim_anom = None
         self.sim_nopia = None
         self.corrected = None
         # Cached images to enable instant slider response
-        self.cached_pred = None            # model prediction (same size as sim_nopia)
-        self.cached_daltonized = None      # daltonize fallback
+        self.cached_pred = None  # model prediction (same size as sim_nopia)
+        self.cached_daltonized = None  # daltonize fallback
 
         self._setup_style()
         self._build_layout()
+        
+        # Check if this is the first run and show the tutorial
+        self._check_first_run()
 
+    # --- Persistence Handlers ---
+    def _load_settings(self):
+        """Loads intensity and model state from config file."""
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                settings = json.load(f)
+                intensity = settings.get("intensity", 75)
+                use_model = settings.get("use_model", False)
+                return intensity, use_model
+        except Exception:
+            return 75, False
+
+    def _save_settings(self):
+        """Saves current intensity and model state to config file."""
+        settings = {
+            "intensity": self.intensity.get(),
+            "use_model": self.use_model.get()
+        }
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(settings, f, indent=4)
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+            
+    # --- Style and Layout ---
     def _setup_style(self):
         # simple modern dark-ish ttk styling
         self.style = ttk.Style(self.root)
@@ -84,7 +122,7 @@ class DaltonizeGUI:
                              background=self.accent, foreground="#ffffff",
                              padding=6, relief="flat", font=("Segoe UI", 10, "bold"))
         self.style.map("Primary.TButton",
-                       background=[("active", "#16a34a"), ("!active", self.accent)])
+                        background=[("active", "#16a34a"), ("!active", self.accent)])
         self.style.configure("PrimaryHover.TButton",
                              background="#16a34a", foreground="#000000",
                              padding=6, relief="flat", font=("Segoe UI", 10, "bold"))
@@ -106,6 +144,15 @@ class DaltonizeGUI:
         # keep PanelHighlight identical to Panel to avoid any visual change on hover
         self.style.configure("Panel.TLabelframe", background=self.card, foreground=self.muted, borderwidth=1, relief="groove")
         self.style.configure("PanelHighlight.TLabelframe", background=self.card, foreground=self.muted, borderwidth=1, relief="groove")
+        
+        # Color Inspector Style
+        self.style.configure("Inspector.TLabel", 
+                             background=self.card, 
+                             foreground="#ffffff", 
+                             font=("Consolas", 9), 
+                             padding=6,
+                             anchor="w")
+
 
     def _build_layout(self):
         # Top controls
@@ -116,8 +163,8 @@ class DaltonizeGUI:
         self.load_btn = ttk.Button(ctrl, text="📁 Load Image", command=self.load_image, style="Primary.TButton")
         self.load_btn.pack(side="left", padx=(0, 6))
 
-        # Help button now uses Primary style and a bold font for readability
-        self.help_btn = ttk.Button(ctrl, text="❔ Help", command=self.show_help, style="Primary.TButton")
+        # Help button linked to the new show_tutorial method
+        self.help_btn = ttk.Button(ctrl, text="❔ Help", command=self.show_tutorial, style="Primary.TButton")
         self.help_btn.pack(side="left", padx=(0, 6))
 
         self.cam_btn = ttk.Button(ctrl, text="🎥 Start Camera", command=self.toggle_camera, style="Secondary.TButton")
@@ -142,6 +189,13 @@ class DaltonizeGUI:
         # Save uses primary style
         self.save_btn = ttk.Button(ctrl, text="💾 Save Corrected", command=self.save_corrected, style="Primary.TButton")
         self.save_btn.pack(side="right", padx=(6, 0))
+        
+        # New label for color inspection, placed under the main controls
+        self.color_info_label = ttk.Label(self.root, 
+                                          text="Hover over 'Original Image' for color inspection.",
+                                          style="Inspector.TLabel")
+        self.color_info_label.pack(fill="x", padx=12, pady=(0, 6))
+
 
         # Attach hover handlers to make text readable on hover and optionally highlight a panel container.
         def attach_hover(widget, normal_style=None, hover_style=None, highlight_panel=None, delay=80):
@@ -227,13 +281,14 @@ class DaltonizeGUI:
 
         # Four preview panels
         panels = ttk.Frame(self.root, padding=8)
-        panels.pack(fill="both", expand=True, padx=12, pady=(6, 12))
+        panels.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         panels.columnconfigure((0, 1, 2, 3), weight=1)
 
-        self.panel_normal = ttk.Labelframe(panels, text="Normal", padding=6, style="Panel.TLabelframe")
-        self.panel_anom = ttk.Labelframe(panels, text="Deuteranomaly (sim)", padding=6, style="Panel.TLabelframe")
-        self.panel_nopia = ttk.Labelframe(panels, text="Deuteranopia (sim)", padding=6, style="Panel.TLabelframe")
-        self.panel_model = ttk.Labelframe(panels, text="Model-Corrected", padding=6, style="Panel.TLabelframe")
+        # Updated Panel Titles for Clarity
+        self.panel_normal = ttk.Labelframe(panels, text="Original Image", padding=6, style="Panel.TLabelframe")
+        self.panel_anom = ttk.Labelframe(panels, text="Deuteranomaly (Sim)", padding=6, style="Panel.TLabelframe")
+        self.panel_nopia = ttk.Labelframe(panels, text="Deuteranopia (Sim)", padding=6, style="Panel.TLabelframe")
+        self.panel_model = ttk.Labelframe(panels, text="Model Corrected", padding=6, style="Panel.TLabelframe")
 
         self.panel_normal.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
         self.panel_anom.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
@@ -256,9 +311,103 @@ class DaltonizeGUI:
         for lbl in (self.lbl_normal, self.lbl_anom, self.lbl_nopia, self.lbl_model):
             lbl.pack(fill="both", expand=True)
 
+        # BIND THE COLOR INSPECTOR HOVER EVENT
+        self.lbl_normal.bind("<Motion>", self._on_color_inspect)
+        self.lbl_normal.bind("<Leave>", self._on_color_inspect_leave)
+
         # Status bar
         self.status = ttk.Label(self.root, text="Ready", anchor="w")
         self.status.pack(fill="x", padx=12, pady=(0, 12))
+
+    # --- Color Inspector Logic ---
+    def _on_color_inspect_leave(self, event):
+        """Resets the color inspection label when the mouse leaves the panel."""
+        self.color_info_label.config(text="Hover over 'Original Image' for color inspection.")
+
+    def _on_color_inspect(self, event):
+        """
+        Handles the mouse motion event to inspect the color at the cursor.
+        event.x and event.y are coordinates relative to the tk.Label widget.
+        """
+        if self.orig_bgr is None:
+            return
+
+        # 1. Get current image dimensions
+        # Get the dimensions of the displayed photo image (ImgTk is stored on the label)
+        imgtk = self.lbl_normal.imgtk
+        if not imgtk:
+            return
+            
+        display_w = imgtk.width()
+        display_h = imgtk.height()
+        
+        # 2. Get original image dimensions
+        orig_h, orig_w = self.orig_bgr.shape[:2]
+        
+        # 3. Calculate scaling factor used in _set_img_on_label
+        # Note: we need to use the actual size of the image displayed on the canvas, 
+        # but since we are scaling proportionally to a max_dim=360, we can use the ratio of original/displayed
+        
+        # 4. Map event coordinates (x, y) back to original image (orig_bgr) indices
+        # Ensure we don't divide by zero and handle edges
+        if display_w == 0 or display_h == 0:
+            return
+            
+        # Scale X and Y from label coordinates to original image coordinates
+        x_scaled = int(event.x * (orig_w / display_w))
+        y_scaled = int(event.y * (orig_h / display_h))
+        
+        # Clamp coordinates to bounds
+        x_idx = np.clip(x_scaled, 0, orig_w - 1)
+        y_idx = np.clip(y_scaled, 0, orig_h - 1)
+
+        # 5. Extract colors from all buffers (read under lock for thread safety)
+        with self.cache_lock:
+            if self.orig_bgr is None or self.sim_anom is None or self.sim_nopia is None or self.corrected is None:
+                return
+
+            # Note: OpenCV uses BGR format
+            orig_bgr = self.orig_bgr[y_idx, x_idx]
+            anom_bgr = self.sim_anom[y_idx, x_idx]
+            nopia_bgr = self.sim_nopia[y_idx, x_idx]
+            corrected_bgr = self.corrected[y_idx, x_idx]
+
+        # Function to format BGR array to Hex string
+        def bgr_to_hex(bgr):
+            r, g, b = bgr[2], bgr[1], bgr[0]
+            return f"#{r:02X}{g:02X}{b:02X}"
+
+        # Function to format BGR array to RGB string
+        def bgr_to_rgb(bgr):
+            r, g, b = bgr[2], bgr[1], bgr[0]
+            return f"RGB({r}, {g}, {b})"
+
+        # 6. Format output string
+        output = (
+            f"Pixel [{x_idx}, {y_idx}] | "
+            f"Original: {bgr_to_hex(orig_bgr)} ({bgr_to_rgb(orig_bgr)}) | "
+            f"Anomaly: {bgr_to_hex(anom_bgr)} | "
+            f"Nopia: {bgr_to_hex(nopia_bgr)} | "
+            f"Corrected: {bgr_to_hex(corrected_bgr)}"
+        )
+        
+        # 7. Update label
+        self.color_info_label.config(text=output)
+
+
+    # ---------- First-Run Check ----------
+    def _check_first_run(self):
+        """Checks for the flag file and shows tutorial if it doesn't exist."""
+        if not os.path.exists(TUTORIAL_FLAG_FILE):
+            # Use root.after to ensure the main window is fully rendered before opening the tutorial modal
+            self.root.after(200, self.show_tutorial)
+            # Create the flag file so it doesn't run again
+            try:
+                with open(TUTORIAL_FLAG_FILE, 'w') as f:
+                    f.write("Tutorial viewed.")
+            except Exception:
+                # If writing the file fails, just proceed without automatic showing next time
+                pass
 
     # ---------- UI actions ----------
     def _on_intensity_change(self, _=None):
@@ -594,7 +743,7 @@ class DaltonizeGUI:
             # if busy, schedule a short retry
             self.root.after(100, lambda: self._process_and_update(frame, fast=fast))
 
-    def show_help(self):
+    def show_tutorial(self):
         """Open a modal dialog with a clear overview and instructions (structured and readable)."""
         # Build a modal with tagged formatting for headings and body text
         win = tk.Toplevel(self.root)
@@ -609,7 +758,7 @@ class DaltonizeGUI:
         frame = ttk.Frame(win)
         frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
-        text = tk.Text(frame, wrap="word", bg="#0f1724", fg="#e6eef8", bd=0, relief="flat")
+        text = tk.Text(frame, wrap="word", bg=self.card, fg="#e6eef8", bd=0, relief="flat")
         text.pack(side="left", fill="both", expand=True)
         sb = ttk.Scrollbar(frame, command=text.yview)
         sb.pack(side="right", fill="y")
@@ -618,33 +767,31 @@ class DaltonizeGUI:
         # Tags for structured formatting
         text.tag_configure("title", font=("Segoe UI", 12, "bold"), foreground=self.accent, spacing3=6)
         text.tag_configure("section", font=("Segoe UI", 10, "bold"), foreground="#e6eef8", spacing1=6, spacing3=4)
+        text.tag_configure("step_title", font=("Segoe UI", 10, "bold"), foreground=self.accent, lmargin1=10, spacing1=4)
         text.tag_configure("body", font=("Segoe UI", 10), foreground="#cbd5e1", lmargin1=10, lmargin2=10, spacing1=2, spacing3=6)
         text.tag_configure("bullet", font=("Segoe UI", 10), foreground="#cbd5e1", lmargin1=20, lmargin2=40)
 
-        # Insert structured content
-        text.insert("end", "🟩 Overview of the Simulation\n", "title")
-        text.insert("end", "This application simulates how images appear to people with deuteranomaly and deuteranopia, "
-                    "and provides a model-based correction (daltonization) to improve color distinction.\n\n", "body")
+        # Insert structured content (Tutorial focus)
+        text.insert("end", "💡 Welcome to Smart Color Aid!\n", "title")
+        text.insert("end", "This quick tour explains the four panels you see in the main window and how the tool helps with color vision deficiency.\n\n", "body")
 
-        text.insert("end", "Graphical User Interface (GUI) Instruction\n", "section")
-        text.insert("end", "• Load Image — open a single image and compute all four panels.\n", "bullet")
-        text.insert("end", "• Start Camera — live camera feed populates the four panels in real time.\n", "bullet")
-        text.insert("end", "• Use Model — toggle learned correction. The system uses cached fast fallback during streaming and "
-                    "runs the full model periodically to avoid lag.\n", "bullet")
-        text.insert("end", "• Intensity — slide between 1–100 to control correction strength; drag updates instantly, "
-                    "release triggers a full high-quality reprocess for static images.\n\n", "body")
+        text.insert("end", "Panel 1: Original Image\n", "step_title")
+        text.insert("end", "• This is the image you loaded or the live camera feed, displayed without any modification. It serves as your primary reference point.\n\n", "bullet")
 
-        text.insert("end", "Logic Behind the Simulation\n", "section")
-        text.insert("end", "a) Simulation — cone-projection matrices (LMS) are used to simulate perceived colors for deuteranomaly "
-                    "and deuteranopia. Post-processing (LAB/HSV) improves perceptual realism.\n", "body")
-        text.insert("end", "b) Correction — the GUI blends chroma channels (a/b in LAB) between simulated and corrected images. "
-                    "A trained model is used when available; an algorithmic daltonize() fallback is used for fast preview.\n", "body")
-        text.insert("end", "c) Performance — camera frames are processed in background threads; heavy model predictions are scheduled "
-                    "periodically and cached to keep the UI responsive.\n\n", "body")
+        text.insert("end", "Panel 2: Deuteranomaly (Sim)\n", "step_title")
+        text.insert("end", "• This simulates the perception of **Deuteranomaly**, the most common type of red-green color blindness. Colors often appear subdued or 'muddy'.\n\n", "bullet")
 
-        text.insert("end", "Tips\n", "section")
-        text.insert("end", "- For best results with the model, place the Keras .h5 file in the models/ folder.\n", "body")
-        text.insert("end", "- If the camera or model fails to start, check drivers and TensorFlow installation.\n", "body")
+        text.insert("end", "Panel 3: Deuteranopia (Sim)\n", "step_title")
+        text.insert("end", "• This simulates **Deuteranopia**, a more severe form of red-green color blindness where the primary red-sensing cones are completely missing.\n\n", "bullet")
+
+        text.insert("end", "Panel 4: Model Corrected\n", "step_title")
+        text.insert("end", "• This panel shows the corrected image. Our algorithm adjusts the color hues (chroma) to maximize the distinction between colors that appear similar in the simulated views.\n", "bullet")
+        text.insert("end", "• Use the **Intensity** slider at the top to control the strength of this correction (blending strength) for the best balance.\n\n", "bullet")
+
+        text.insert("end", "Controls & Performance\n", "section")
+        text.insert("end", "• Use Model Checkbox: Toggles the use of the powerful, trained neural network model. If the model file is missing, an algorithmic fallback (Daltonize) is used instead.\n", "bullet")
+        text.insert("end", "• Performance: Live camera processing and model predictions run in background threads, scheduled periodically to ensure the application remains highly responsive.\n", "bullet")
+
 
         text.configure(state="disabled")
 
@@ -660,7 +807,13 @@ class DaltonizeGUI:
 def main():
     root = tk.Tk()
     app = DaltonizeGUI(root)
-    root.protocol("WM_DELETE_WINDOW", lambda: (app._stop_camera(), root.destroy()))
+    # Modified protocol to save settings before closing
+    def on_closing():
+        app._stop_camera()
+        app._save_settings()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.geometry("1400x520")
     root.mainloop()
 
