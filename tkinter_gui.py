@@ -78,25 +78,34 @@ class DaltonizeGUI:
         self.root.configure(bg=self.bg)
 
         # --- Button styles: primary (accent) and secondary (subtle) with hover variants ---
-        # Primary: accent background, black text normally, black on hover
+        # Primary: accent background, WHITE text normally, black text on hover (as requested)
+        # ensure normal and hover preserve identical geometry (font, padding, relief)
         self.style.configure("Primary.TButton",
-                             background=self.accent, foreground="#000000",
-                             padding=6, relief="flat")
+                             background=self.accent, foreground="#ffffff",
+                             padding=6, relief="flat", font=("Segoe UI", 10, "bold"))
         self.style.map("Primary.TButton",
                        background=[("active", "#16a34a"), ("!active", self.accent)])
         self.style.configure("PrimaryHover.TButton",
-                             background="#16a34a", foreground="#000000", padding=6, relief="flat")
+                             background="#16a34a", foreground="#000000",
+                             padding=6, relief="flat", font=("Segoe UI", 10, "bold"))
 
-        # Secondary: darker background, muted text normally, black on hover
+        # Secondary: darker background, WHITE text normally, black text on hover
         self.style.configure("Secondary.TButton",
-                             background="#1f2937", foreground=self.muted,
-                             padding=6, relief="flat")
+                             background="#1f2937", foreground="#ffffff",
+                             padding=6, relief="flat", font=("Segoe UI", 10))
         self.style.configure("SecondaryHover.TButton",
-                             background="#364152", foreground="#000000", padding=6, relief="flat")
+                             background="#364152", foreground="#000000",
+                             padding=6, relief="flat", font=("Segoe UI", 10))
 
-        # Checkbutton styles (Use Model) - normal and hover (hover text -> black)
-        self.style.configure("Check.TCheckbutton", background=self.bg, foreground="white", padding=4)
-        self.style.configure("CheckHover.TCheckbutton", background=self.bg, foreground="#000000", padding=4)
+        # Checkbutton styles (Use Model) - normal and hover (hover text -> black for readability)
+        # keep same padding/font for checkbutton hover to avoid layout changes
+        self.style.configure("Check.TCheckbutton", background=self.bg, foreground="#ffffff", padding=4, font=("Segoe UI", 10))
+        self.style.configure("CheckHover.TCheckbutton", background=self.bg, foreground="#000000", padding=4, font=("Segoe UI", 10))
+
+        # Panel (Labelframe) styles for normal and highlighted states
+        # keep PanelHighlight identical to Panel to avoid any visual change on hover
+        self.style.configure("Panel.TLabelframe", background=self.card, foreground=self.muted, borderwidth=1, relief="groove")
+        self.style.configure("PanelHighlight.TLabelframe", background=self.card, foreground=self.muted, borderwidth=1, relief="groove")
 
     def _build_layout(self):
         # Top controls
@@ -107,10 +116,14 @@ class DaltonizeGUI:
         self.load_btn = ttk.Button(ctrl, text="📁 Load Image", command=self.load_image, style="Primary.TButton")
         self.load_btn.pack(side="left", padx=(0, 6))
 
+        # Help button now uses Primary style and a bold font for readability
+        self.help_btn = ttk.Button(ctrl, text="❔ Help", command=self.show_help, style="Primary.TButton")
+        self.help_btn.pack(side="left", padx=(0, 6))
+
         self.cam_btn = ttk.Button(ctrl, text="🎥 Start Camera", command=self.toggle_camera, style="Secondary.TButton")
         self.cam_btn.pack(side="left", padx=(0, 6))
 
-        # Use Model as a styled checkbutton so hover can change its text color to black
+        # Use Model as a styled checkbutton so hover can change its text color to readable white
         self.use_model_chk = ttk.Checkbutton(ctrl, text="Use Model", variable=self.use_model,
                                              command=self._on_toggle_model, style="Check.TCheckbutton")
         self.use_model_chk.pack(side="left", padx=(6, 12))
@@ -130,34 +143,109 @@ class DaltonizeGUI:
         self.save_btn = ttk.Button(ctrl, text="💾 Save Corrected", command=self.save_corrected, style="Primary.TButton")
         self.save_btn.pack(side="right", padx=(6, 0))
 
-        # Attach hover handlers to make text readable on hover
-        def attach_hover(btn, normal_style, hover_style):
+        # Attach hover handlers to make text readable on hover and optionally highlight a panel container.
+        def attach_hover(widget, normal_style=None, hover_style=None, highlight_panel=None, delay=80):
+            """
+            Debounced hover binder to avoid flicker:
+              - schedule a small delayed enter/leave action (ms=delay)
+              - cancel the opposite pending job if user moves mouse quickly
+              - highlight_panel (ttk.Labelframe) is toggled on enter/leave
+            """
+            # safely attach attributes for pending job ids
+            setattr(widget, "_hover_enter_job", None)
+            setattr(widget, "_hover_leave_job", None)
+
+            def do_enter():
+                try:
+                    if hover_style:
+                        widget.configure(style=hover_style)
+                except Exception:
+                    pass
+                if highlight_panel is not None:
+                    try:
+                        highlight_panel.configure(style="PanelHighlight.TLabelframe")
+                    except Exception:
+                        pass
+
+            def do_leave():
+                try:
+                    if normal_style:
+                        widget.configure(style=normal_style)
+                except Exception:
+                    pass
+                if highlight_panel is not None:
+                    try:
+                        highlight_panel.configure(style="Panel.TLabelframe")
+                    except Exception:
+                        pass
+
+            def on_enter(e):
+                # cancel any pending leave job
+                job = getattr(widget, "_hover_leave_job", None)
+                if job:
+                    try:
+                        self.root.after_cancel(job)
+                    except Exception:
+                        pass
+                    setattr(widget, "_hover_leave_job", None)
+                # schedule enter job
+                job = getattr(widget, "_hover_enter_job", None)
+                if job:
+                    # already scheduled
+                    return
+                try:
+                    j = self.root.after(delay, do_enter)
+                    setattr(widget, "_hover_enter_job", j)
+                except Exception:
+                    # fallback immediate
+                    do_enter()
+
+            def on_leave(e):
+                # cancel any pending enter job
+                job = getattr(widget, "_hover_enter_job", None)
+                if job:
+                    try:
+                        self.root.after_cancel(job)
+                    except Exception:
+                        pass
+                    setattr(widget, "_hover_enter_job", None)
+                # schedule leave job
+                job = getattr(widget, "_hover_leave_job", None)
+                if job:
+                    return
+                try:
+                    j = self.root.after(delay, do_leave)
+                    setattr(widget, "_hover_leave_job", j)
+                except Exception:
+                    do_leave()
+
             try:
-                btn.bind("<Enter>", lambda e: btn.configure(style=hover_style))
-                btn.bind("<Leave>", lambda e: btn.configure(style=normal_style))
+                widget.bind("<Enter>", on_enter)
+                widget.bind("<Leave>", on_leave)
             except Exception:
                 pass
-
-        attach_hover(self.load_btn, "Primary.TButton", "PrimaryHover.TButton")
-        attach_hover(self.save_btn, "Primary.TButton", "PrimaryHover.TButton")
-        attach_hover(self.cam_btn, "Secondary.TButton", "SecondaryHover.TButton")
-        # Attach hover to the checkbutton; swap between Check and CheckHover styles
-        attach_hover(self.use_model_chk, "Check.TCheckbutton", "CheckHover.TCheckbutton")
 
         # Four preview panels
         panels = ttk.Frame(self.root, padding=8)
         panels.pack(fill="both", expand=True, padx=12, pady=(6, 12))
         panels.columnconfigure((0, 1, 2, 3), weight=1)
 
-        self.panel_normal = ttk.Labelframe(panels, text="Normal", padding=6)
-        self.panel_anom = ttk.Labelframe(panels, text="Deuteranomaly (sim)", padding=6)
-        self.panel_nopia = ttk.Labelframe(panels, text="Deuteranopia (sim)", padding=6)
-        self.panel_model = ttk.Labelframe(panels, text="Model-Corrected", padding=6)
+        self.panel_normal = ttk.Labelframe(panels, text="Normal", padding=6, style="Panel.TLabelframe")
+        self.panel_anom = ttk.Labelframe(panels, text="Deuteranomaly (sim)", padding=6, style="Panel.TLabelframe")
+        self.panel_nopia = ttk.Labelframe(panels, text="Deuteranopia (sim)", padding=6, style="Panel.TLabelframe")
+        self.panel_model = ttk.Labelframe(panels, text="Model-Corrected", padding=6, style="Panel.TLabelframe")
 
         self.panel_normal.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
         self.panel_anom.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
         self.panel_nopia.grid(row=0, column=2, sticky="nsew", padx=6, pady=6)
         self.panel_model.grid(row=0, column=3, sticky="nsew", padx=6, pady=6)
+
+        # Now that panels exist, attach hover handlers (no panel highlighting to avoid background changes)
+        attach_hover(self.load_btn, "Primary.TButton", "PrimaryHover.TButton", delay=80)
+        attach_hover(self.help_btn, "Primary.TButton", "PrimaryHover.TButton", delay=80)
+        attach_hover(self.save_btn, "Primary.TButton", "PrimaryHover.TButton", delay=80)
+        attach_hover(self.cam_btn, "Secondary.TButton", "SecondaryHover.TButton", delay=80)
+        attach_hover(self.use_model_chk, "Check.TCheckbutton", "CheckHover.TCheckbutton", delay=80)
 
         # Image labels (will hold ImageTk)
         self.lbl_normal = tk.Label(self.panel_normal, text="No image", bg=self.card, fg=self.muted)
@@ -505,6 +593,68 @@ class DaltonizeGUI:
         else:
             # if busy, schedule a short retry
             self.root.after(100, lambda: self._process_and_update(frame, fast=fast))
+
+    def show_help(self):
+        """Open a modal dialog with a clear overview and instructions (structured and readable)."""
+        # Build a modal with tagged formatting for headings and body text
+        win = tk.Toplevel(self.root)
+        win.title("Simulation Overview")
+        win.transient(self.root)
+        win.grab_set()
+        win.geometry("760x520")
+
+        header = ttk.Label(win, text="Smart Color Aid — Overview", font=("Segoe UI", 14, "bold"))
+        header.pack(anchor="w", padx=12, pady=(12, 6))
+
+        frame = ttk.Frame(win)
+        frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+        text = tk.Text(frame, wrap="word", bg="#0f1724", fg="#e6eef8", bd=0, relief="flat")
+        text.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(frame, command=text.yview)
+        sb.pack(side="right", fill="y")
+        text.configure(yscrollcommand=sb.set, padx=10, pady=10)
+
+        # Tags for structured formatting
+        text.tag_configure("title", font=("Segoe UI", 12, "bold"), foreground=self.accent, spacing3=6)
+        text.tag_configure("section", font=("Segoe UI", 10, "bold"), foreground="#e6eef8", spacing1=6, spacing3=4)
+        text.tag_configure("body", font=("Segoe UI", 10), foreground="#cbd5e1", lmargin1=10, lmargin2=10, spacing1=2, spacing3=6)
+        text.tag_configure("bullet", font=("Segoe UI", 10), foreground="#cbd5e1", lmargin1=20, lmargin2=40)
+
+        # Insert structured content
+        text.insert("end", "🟩 Overview of the Simulation\n", "title")
+        text.insert("end", "This application simulates how images appear to people with deuteranomaly and deuteranopia, "
+                    "and provides a model-based correction (daltonization) to improve color distinction.\n\n", "body")
+
+        text.insert("end", "Graphical User Interface (GUI) Instruction\n", "section")
+        text.insert("end", "• Load Image — open a single image and compute all four panels.\n", "bullet")
+        text.insert("end", "• Start Camera — live camera feed populates the four panels in real time.\n", "bullet")
+        text.insert("end", "• Use Model — toggle learned correction. The system uses cached fast fallback during streaming and "
+                    "runs the full model periodically to avoid lag.\n", "bullet")
+        text.insert("end", "• Intensity — slide between 1–100 to control correction strength; drag updates instantly, "
+                    "release triggers a full high-quality reprocess for static images.\n\n", "body")
+
+        text.insert("end", "Logic Behind the Simulation\n", "section")
+        text.insert("end", "a) Simulation — cone-projection matrices (LMS) are used to simulate perceived colors for deuteranomaly "
+                    "and deuteranopia. Post-processing (LAB/HSV) improves perceptual realism.\n", "body")
+        text.insert("end", "b) Correction — the GUI blends chroma channels (a/b in LAB) between simulated and corrected images. "
+                    "A trained model is used when available; an algorithmic daltonize() fallback is used for fast preview.\n", "body")
+        text.insert("end", "c) Performance — camera frames are processed in background threads; heavy model predictions are scheduled "
+                    "periodically and cached to keep the UI responsive.\n\n", "body")
+
+        text.insert("end", "Tips\n", "section")
+        text.insert("end", "- For best results with the model, place the Keras .h5 file in the models/ folder.\n", "body")
+        text.insert("end", "- If the camera or model fails to start, check drivers and TensorFlow installation.\n", "body")
+
+        text.configure(state="disabled")
+
+        close_btn = ttk.Button(win, text="Close", command=win.destroy, style="Primary.TButton")
+        close_btn.pack(pady=(0, 12))
+        try:
+            close_btn.bind("<Enter>", lambda e: close_btn.configure(style="PrimaryHover.TButton"))
+            close_btn.bind("<Leave>", lambda e: close_btn.configure(style="Primary.TButton"))
+        except Exception:
+            pass
 
 
 def main():
